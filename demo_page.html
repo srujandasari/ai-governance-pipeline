@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Governance Pipeline — Use Case Intake</title>
+<style>
+  :root{--bg:#0b1220;--panel:#121c2e;--border:#1f2c44;--muted:#8b97a7;--text:#e6edf3;
+        --green:#3fb950;--amber:#d29922;--red:#f85149;--blue:#58a6ff}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);
+       color:var(--text);margin:0;padding:32px;line-height:1.5}
+  .wrap{max-width:920px;margin:0 auto}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:28px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:28px;align-items:start}
+  @media(max-width:780px){.grid{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:22px}
+  .panel h2{font-size:15px;margin:0 0 18px;color:#cdd6e2}
+  label{display:block;font-size:12px;color:var(--muted);text-transform:uppercase;
+        letter-spacing:.5px;margin:14px 0 6px}
+  label:first-of-type{margin-top:0}
+  input,textarea,select{width:100%;background:var(--bg);border:1px solid var(--border);
+        color:var(--text);border-radius:8px;padding:10px 12px;font-size:14px;font-family:inherit}
+  textarea{resize:vertical;min-height:64px}
+  button{margin-top:20px;width:100%;background:var(--blue);color:#06121f;border:none;
+        border-radius:8px;padding:12px;font-size:15px;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .preset{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+  .preset button{margin:0;width:auto;flex:1;background:#1f2c44;color:var(--text);
+        font-weight:600;font-size:12px;padding:8px 10px}
+  .out{font-size:14px}
+  .placeholder{color:var(--muted);font-size:13px}
+  .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;
+        font-weight:700;margin-right:6px}
+  .b-LOW,.b-INTERNAL,.b-PUBLIC,.b-AUTO_APPROVE{background:rgba(63,185,80,.15);color:var(--green)}
+  .b-MEDIUM,.b-CONFIDENTIAL,.b-INFOSEC_REVIEW{background:rgba(210,153,34,.15);color:var(--amber)}
+  .b-HIGH,.b-RESTRICTED,.b-ISO_SIGNOFF{background:rgba(248,81,73,.15);color:var(--red)}
+  .row{margin:14px 0;padding-bottom:14px;border-bottom:1px solid var(--border)}
+  .row:last-child{border-bottom:none}
+  .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  .v{font-size:14px}
+  ul{margin:6px 0 0;padding-left:18px}
+  li{margin:3px 0}
+  .spin{color:var(--muted);font-size:13px}
+  .err{color:var(--red);font-size:13px}
+  .rmf{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px;margin-top:6px}
+  .rmf b{color:var(--blue)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>AI Governance Pipeline</h1>
+  <div class="sub">Use-Case Intake &middot; NIST AI RMF aligned &middot; classify &rarr; assess &rarr; route &rarr; guide</div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Submit a Use Case</h2>
+      <div class="preset">
+        <button onclick="fillPreset('low')">Load LOW example</button>
+        <button onclick="fillPreset('med')">Load MEDIUM example</button>
+        <button onclick="fillPreset('high')">Load HIGH example</button>
+      </div>
+      <label>Use Case Name</label>
+      <input id="use_case_name" placeholder="e.g. Customer Loan Pre-Decision Assistant">
+      <label>Business Unit</label>
+      <input id="business_unit" placeholder="e.g. Consumer Lending / Risk">
+      <label>Description</label>
+      <textarea id="description" placeholder="What does this AI use case do?"></textarea>
+      <label>Data Description</label>
+      <textarea id="data_description" placeholder="What data does it touch? Any PII / customer data?"></textarea>
+      <label>Proposed Tool</label>
+      <input id="proposed_tool" placeholder="e.g. Microsoft Copilot, custom LLM, n8n">
+      <label>Third Parties</label>
+      <input id="third_parties" placeholder="e.g. external model API, none">
+      <label>Expected Volume</label>
+      <input id="expected_volume" placeholder="e.g. 300 per day">
+      <button id="submitBtn" onclick="submit()">Submit for Governance Review</button>
+    </div>
+
+    <div class="panel">
+      <h2>Governance Decision</h2>
+      <div id="out" class="out">
+        <div class="placeholder">Submit a use case to see the classification, NIST AI RMF risk
+        assessment, approval routing, and generated usage guidance.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const WEBHOOK = "http://localhost:5678/webhook/ai-usecase-intake";
+
+const PRESETS = {
+  low:{use_case_name:"Internal Meeting Notes Summarizer",business_unit:"IT Operations",
+    description:"Use an internal Copilot assistant to summarize recorded internal team stand-up meetings into action items shared on the team SharePoint. No customer involvement.",
+    data_description:"Internal meeting transcripts about project status and task assignments. No customer data, no PII.",
+    proposed_tool:"Microsoft Copilot for M365",third_parties:"None - stays within Microsoft tenant",
+    expected_volume:"20 meetings per week"},
+  med:{use_case_name:"Vendor Security Questionnaire Triage",business_unit:"Third-Party Risk",
+    description:"An n8n workflow that uses an LLM to read incoming vendor security questionnaire responses, flag incomplete or weak answers, and route them to an analyst for review before vendor onboarding.",
+    data_description:"Vendor company security control responses, SOC 2 summaries, internal risk ratings. Confidential business data, no customer PII.",
+    proposed_tool:"n8n with OpenAI node",third_parties:"OpenAI API for text analysis",
+    expected_volume:"40 questionnaires per month"},
+  high:{use_case_name:"Automated Customer Loan Pre-Decision Assistant",business_unit:"Consumer Lending / Risk",
+    description:"Use an LLM to analyze customer financial data and generate a recommended approve or decline decision for personal loan applications, surfaced to a loan officer.",
+    data_description:"Customer name, SSN, income, credit score, bank account history, full loan application. Highly sensitive customer financial data.",
+    proposed_tool:"Custom LLM integration via external API",third_parties:"External foundation model API provider",
+    expected_volume:"300 applications per day"}
+};
+
+function fillPreset(k){
+  const p=PRESETS[k];
+  for(const id in p){document.getElementById(id).value=p[id];}
+}
+
+function badge(val){return '<span class="badge b-'+val+'">'+val+'</span>';}
+
+async function submit(){
+  const btn=document.getElementById('submitBtn');
+  const out=document.getElementById('out');
+  const payload={
+    use_case_name:val('use_case_name'),business_unit:val('business_unit'),
+    description:val('description'),data_description:val('data_description'),
+    proposed_tool:val('proposed_tool'),third_parties:val('third_parties'),
+    expected_volume:val('expected_volume')
+  };
+  if(!payload.use_case_name||!payload.business_unit||!payload.description||!payload.data_description){
+    out.innerHTML='<div class="err">Please fill in at least Use Case Name, Business Unit, Description, and Data Description.</div>';
+    return;
+  }
+  btn.disabled=true;
+  out.innerHTML='<div class="spin">Running governance pipeline — classifying data, assessing risk against NIST AI RMF, generating guidance… (~10s)</div>';
+  try{
+    const r=await fetch(WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const d=await r.json();
+    if(d.status!=='processed'){
+      out.innerHTML='<div class="err">Submission rejected: '+(d.reason||JSON.stringify(d))+'</div>';
+      btn.disabled=false;return;
+    }
+    render(d);
+  }catch(e){
+    out.innerHTML='<div class="err">Could not reach the pipeline. Is n8n running and the workflow Published? ('+e.message+')</div>';
+  }
+  btn.disabled=false;
+}
+
+function val(id){return document.getElementById(id).value.trim();}
+
+function render(d){
+  const g=d.guidance||{};
+  const m=d.nist_rmf_mapping||{};
+  document.getElementById('out').innerHTML=`
+    <div class="row">
+      <div class="k">Classification &amp; Risk</div>
+      <div class="v">${badge(d.data_classification)} ${badge(d.overall_risk_tier)} ${badge(d.approval_route)}</div>
+    </div>
+    <div class="row">
+      <div class="k">Key Risks</div>
+      <ul>${(d.key_risks||[]).map(x=>'<li>'+x+'</li>').join('')}</ul>
+    </div>
+    <div class="row">
+      <div class="k">NIST AI RMF Mapping</div>
+      <div class="rmf">
+        <b>Govern</b><span>${m.govern||''}</span>
+        <b>Map</b><span>${m.map||''}</span>
+        <b>Measure</b><span>${m.measure||''}</span>
+        <b>Manage</b><span>${m.manage||''}</span>
+      </div>
+    </div>
+    <div class="row">
+      <div class="k">Recommended Controls</div>
+      <ul>${(d.recommended_controls||[]).map(x=>'<li>'+x+'</li>').join('')}</ul>
+    </div>
+    <div class="row">
+      <div class="k">Generated User Guidance — Prohibited</div>
+      <ul>${(g.prohibited_use||[]).map(x=>'<li>'+x+'</li>').join('')}</ul>
+    </div>
+    <div class="row">
+      <div class="k">Estimated KRI Impact</div>
+      <div class="v">${d.kri?.est_monthly_time_saved_hrs||0} hrs/mo &middot; $${(d.kri?.est_monthly_cost_saving_usd||0).toLocaleString()}/mo
+      &middot; risk-flagged: ${d.kri?.risk_reduction_flag?'yes':'no'}</div>
+    </div>`;
+}
+</script>
+</body>
+</html>

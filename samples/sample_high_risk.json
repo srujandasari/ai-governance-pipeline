@@ -1,0 +1,9 @@
+{
+  "use_case_name": "Automated Customer Loan Pre-Decision Assistant",
+  "business_unit": "Consumer Lending / Risk",
+  "description": "Use an LLM to analyze customer financial data and generate a recommended approve or decline decision for personal loan applications, surfaced to a loan officer.",
+  "data_description": "Customer name, SSN, income, credit score, bank account history, full loan application. Highly sensitive customer financial data.",
+  "proposed_tool": "Custom LLM integration via external API",
+  "third_parties": "External foundation model API provider",
+  "expected_volume": "300 applications per day"
+}

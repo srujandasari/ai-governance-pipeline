@@ -1,0 +1,269 @@
+{
+  "name": "AI Governance Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-usecase-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-intake",
+      "name": "Webhook - New AI Use Case",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 400],
+      "webhookId": "ai-usecase-intake"
+    },
+    {
+      "parameters": {
+        "jsCode": "// STAGE 1 - Input validation and normalization\nconst body = $input.first().json.body || $input.first().json;\nconst required = ['use_case_name', 'business_unit', 'description', 'data_description'];\nconst missing = required.filter(f => !body[f] || String(body[f]).trim() === '');\nif (missing.length > 0) {\n  return [{ json: { valid: false, error: 'Missing required fields: ' + missing.join(', '), received: body }}];\n}\nreturn [{ json: {\n  valid: true,\n  submission_id: 'UC-' + Date.now(),\n  submitted_at: new Date().toISOString(),\n  use_case_name: String(body.use_case_name).trim(),\n  business_unit: String(body.business_unit).trim(),\n  description: String(body.description).trim(),\n  data_description: String(body.data_description).trim(),\n  proposed_tool: String(body.proposed_tool || 'Not specified').trim(),\n  third_parties: String(body.third_parties || 'None stated').trim(),\n  expected_volume: String(body.expected_volume || 'Not specified').trim()\n}}];"
+      },
+      "id": "validate-input",
+      "name": "Validate & Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid Submission?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"rejected\", \"reason\": $json.error } }}",
+        "options": {}
+      },
+      "id": "respond-invalid",
+      "name": "Reject - Bad Input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', temperature: 0, messages: [ { role: 'system', content: 'You are an AI governance data classification engine for a financial services firm. You map a described AI/automation use case to a data classification and extract structured risk-relevant facts. Classification scale: PUBLIC, INTERNAL, CONFIDENTIAL, RESTRICTED. RESTRICTED covers PII, NPI (non-public personal information under GLBA), PCI, PHI, or regulated data. Respond ONLY with valid minified JSON, no markdown, no preamble.' }, { role: 'user', content: 'Use case: ' + $json.use_case_name + '\\nBusiness unit: ' + $json.business_unit + '\\nDescription: ' + $json.description + '\\nData involved: ' + $json.data_description + '\\nProposed tool: ' + $json.proposed_tool + '\\nThird parties: ' + $json.third_parties + '\\n\\nReturn JSON with keys: data_classification (one of PUBLIC/INTERNAL/CONFIDENTIAL/RESTRICTED), data_types (array of specific data elements detected), contains_pii (boolean), contains_npi (boolean), decision_impact (one of NONE/LOW/MEDIUM/HIGH - HIGH means customer-facing or regulatory decision), repeatability (one of LOW/MEDIUM/HIGH), third_party_dependency (boolean), classification_rationale (one sentence).' } ] }) }}",
+        "options": {}
+      },
+      "id": "llm-classify",
+      "name": "STAGE 1 - LLM Data Classification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 360],
+      "credentials": {
+        "httpHeaderAuth": { "id": "OPENAI_HEADER_CRED", "name": "OpenAI Bearer Auth" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Stage 1 LLM output and merge with submission\nconst submission = $('Validate & Normalize').first().json;\nconst resp = $input.first().json;\nlet raw = resp.choices?.[0]?.message?.content || '{}';\nraw = String(raw).replace(/```json/gi,'').replace(/```/g,'').trim();\nlet parsed;\ntry { parsed = JSON.parse(raw); } catch(e) {\n  parsed = { data_classification: 'CONFIDENTIAL', data_types: [], contains_pii: false, contains_npi: false, decision_impact: 'MEDIUM', repeatability: 'MEDIUM', third_party_dependency: false, classification_rationale: 'Fallback - parser could not read model output, defaulted to conservative tier.' };\n}\nreturn [{ json: { ...submission, stage1: parsed } }];"
+      },
+      "id": "parse-stage1",
+      "name": "Parse Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 360]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', temperature: 0, messages: [ { role: 'system', content: 'You are an AI risk assessment engine aligned to the NIST AI Risk Management Framework (AI RMF 1.0) and FFIEC expectations for financial institutions. You assess an AI/automation use case across standard AI risks and map mitigations to the four NIST AI RMF functions: GOVERN, MAP, MEASURE, MANAGE. Respond ONLY with valid minified JSON, no markdown.' }, { role: 'user', content: 'Use case: ' + $json.use_case_name + '\\nBusiness unit: ' + $json.business_unit + '\\nDescription: ' + $json.description + '\\nData classification: ' + $json.stage1.data_classification + '\\nContains PII: ' + $json.stage1.contains_pii + '\\nContains NPI: ' + $json.stage1.contains_npi + '\\nDecision impact: ' + $json.stage1.decision_impact + '\\nRepeatability: ' + $json.stage1.repeatability + '\\nThird-party dependency: ' + $json.stage1.third_party_dependency + '\\n\\nReturn JSON with keys: data_leakage_risk (LOW/MEDIUM/HIGH), model_bias_risk (LOW/MEDIUM/HIGH), third_party_risk (LOW/MEDIUM/HIGH), regulatory_exposure (LOW/MEDIUM/HIGH), overall_risk_tier (LOW/MEDIUM/HIGH), nist_rmf_mapping (object with keys govern, map, measure, manage - each a one-sentence control statement for this use case), key_risks (array of up to 4 short strings), recommended_controls (array of up to 5 short strings), approval_route (one of AUTO_APPROVE/INFOSEC_REVIEW/ISO_SIGNOFF - AUTO_APPROVE only if overall_risk_tier is LOW, ISO_SIGNOFF if HIGH).' } ] }) }}",
+        "options": {}
+      },
+      "id": "llm-risk",
+      "name": "STAGE 2 - LLM Risk Assessment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 360],
+      "credentials": {
+        "httpHeaderAuth": { "id": "OPENAI_HEADER_CRED", "name": "OpenAI Bearer Auth" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Stage 2 risk output, merge\nconst prev = $('Parse Classification').first().json;\nconst resp = $input.first().json;\nlet raw = resp.choices?.[0]?.message?.content || '{}';\nraw = String(raw).replace(/```json/gi,'').replace(/```/g,'').trim();\nlet parsed;\ntry { parsed = JSON.parse(raw); } catch(e) {\n  parsed = { data_leakage_risk:'MEDIUM', model_bias_risk:'MEDIUM', third_party_risk:'MEDIUM', regulatory_exposure:'MEDIUM', overall_risk_tier:'HIGH', nist_rmf_mapping:{govern:'Logged in AI inventory; ISO accountable.',map:'Context and data flow documented.',measure:'Accuracy and drift to be monitored.',manage:'Residual risk pending ISO acceptance.'}, key_risks:['Parser fallback - manual review required'], recommended_controls:['Manual governance review'], approval_route:'ISO_SIGNOFF' };\n}\nreturn [{ json: { ...prev, stage2: parsed } }];"
+      },
+      "id": "parse-stage2",
+      "name": "Parse Risk Assessment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 360]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.2, messages: [ { role: 'system', content: 'You write concise acceptable-use and prompt-usage guidance for business users adopting an approved AI/automation use case at a financial institution. Output must be practical, specific, and short. Respond ONLY with valid minified JSON, no markdown.' }, { role: 'user', content: 'Use case: ' + $json.use_case_name + '\\nData classification: ' + $json.stage1.data_classification + '\\nRisk tier: ' + $json.stage2.overall_risk_tier + '\\nKey risks: ' + JSON.stringify($json.stage2.key_risks) + '\\n\\nReturn JSON with keys: acceptable_use (array of 3-4 short allowed statements), prohibited_use (array of 3-4 short prohibited statements), prompt_rules (array of 3 short prompt-usage rules), data_input_restrictions (one sentence).' } ] }) }}",
+        "options": {}
+      },
+      "id": "llm-guidance",
+      "name": "STAGE 3 - LLM Guidance Generation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 360],
+      "credentials": {
+        "httpHeaderAuth": { "id": "OPENAI_HEADER_CRED", "name": "OpenAI Bearer Auth" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse guidance, assemble final governance record, compute KRI fields\nconst prev = $('Parse Risk Assessment').first().json;\nconst resp = $input.first().json;\nlet raw = resp.choices?.[0]?.message?.content || '{}';\nraw = String(raw).replace(/```json/gi,'').replace(/```/g,'').trim();\nlet guidance;\ntry { guidance = JSON.parse(raw); } catch(e) {\n  guidance = { acceptable_use:['Use only within approved tenant tools.'], prohibited_use:['Do not paste Restricted data into external AI tools.'], prompt_rules:['Never include credentials in prompts.'], data_input_restrictions:'No Restricted data without masking and logging.' };\n}\nconst tier = prev.stage2.overall_risk_tier;\nconst volMatch = String(prev.expected_volume).match(/\\d+/);\nconst vol = volMatch ? parseInt(volMatch[0]) : 50;\nconst est_minutes_saved_per_run = tier === 'LOW' ? 8 : tier === 'MEDIUM' ? 5 : 3;\nconst est_monthly_time_saved_hrs = Math.round((vol * 22 * est_minutes_saved_per_run) / 60);\nconst est_monthly_cost_saving_usd = est_monthly_time_saved_hrs * 60;\nconst record = {\n  submission_id: prev.submission_id,\n  submitted_at: prev.submitted_at,\n  decided_at: new Date().toISOString(),\n  use_case_name: prev.use_case_name,\n  business_unit: prev.business_unit,\n  proposed_tool: prev.proposed_tool,\n  data_classification: prev.stage1.data_classification,\n  contains_pii: prev.stage1.contains_pii,\n  contains_npi: prev.stage1.contains_npi,\n  decision_impact: prev.stage1.decision_impact,\n  repeatability: prev.stage1.repeatability,\n  overall_risk_tier: tier,\n  data_leakage_risk: prev.stage2.data_leakage_risk,\n  model_bias_risk: prev.stage2.model_bias_risk,\n  third_party_risk: prev.stage2.third_party_risk,\n  regulatory_exposure: prev.stage2.regulatory_exposure,\n  nist_rmf_mapping: prev.stage2.nist_rmf_mapping,\n  key_risks: prev.stage2.key_risks,\n  recommended_controls: prev.stage2.recommended_controls,\n  approval_route: prev.stage2.approval_route,\n  guidance: guidance,\n  kri: { est_monthly_time_saved_hrs, est_monthly_cost_saving_usd, risk_reduction_flag: (prev.stage1.data_classification === 'RESTRICTED' || tier === 'HIGH') }\n};\nreturn [{ json: record }];"
+      },
+      "id": "assemble-record",
+      "name": "Assemble Governance Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 360]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Append to local KRI datastore for the dashboard\nconst record = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.records) staticData.records = [];\nstaticData.records.push({\n  submission_id: record.submission_id,\n  decided_at: record.decided_at,\n  use_case_name: record.use_case_name,\n  business_unit: record.business_unit,\n  data_classification: record.data_classification,\n  overall_risk_tier: record.overall_risk_tier,\n  approval_route: record.approval_route,\n  est_monthly_time_saved_hrs: record.kri.est_monthly_time_saved_hrs,\n  est_monthly_cost_saving_usd: record.kri.est_monthly_cost_saving_usd,\n  risk_reduction_flag: record.kri.risk_reduction_flag\n});\nif (staticData.records.length > 200) staticData.records = staticData.records.slice(-200);\nreturn [{ json: record }];"
+      },
+      "id": "log-kri",
+      "name": "Log to KRI Datastore",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 360]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": { "__rl": true, "value": "ai-governance", "mode": "name" },
+        "text": "=:rotating_light: *AI Governance Decision* - `{{ $json.submission_id }}`\\n*Use case:* {{ $json.use_case_name }} ({{ $json.business_unit }})\\n*Data class:* {{ $json.data_classification }}  |  *Risk tier:* {{ $json.overall_risk_tier }}\\n*Routing:* {{ $json.approval_route }}\\n*Key risks:* {{ $json.key_risks.join(', ') }}\\n*Est. monthly savings:* {{ $json.kri.est_monthly_time_saved_hrs }} hrs / ${{ $json.kri.est_monthly_cost_saving_usd }}\\n_NIST RMF Govern:_ {{ $json.nist_rmf_mapping.govern }}",
+        "otherOptions": {}
+      },
+      "id": "slack-notify",
+      "name": "Notify Approver (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [2440, 280],
+      "credentials": {
+        "slackOAuth2Api": { "id": "SLACK_CRED", "name": "Slack account" }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"processed\", \"submission_id\": $json.submission_id, \"data_classification\": $json.data_classification, \"overall_risk_tier\": $json.overall_risk_tier, \"approval_route\": $json.approval_route, \"key_risks\": $json.key_risks, \"recommended_controls\": $json.recommended_controls, \"nist_rmf_mapping\": $json.nist_rmf_mapping, \"guidance\": $json.guidance, \"kri\": $json.kri } }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond - Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2440, 440]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "ai-governance-dashboard",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-dashboard",
+      "name": "Webhook - Dashboard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 760],
+      "webhookId": "ai-governance-dashboard"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst recs = staticData.records || [];\nconst total = recs.length;\nconst byTier = { LOW:0, MEDIUM:0, HIGH:0 };\nconst byClass = { PUBLIC:0, INTERNAL:0, CONFIDENTIAL:0, RESTRICTED:0 };\nlet pending = 0, totalHrs = 0, totalUsd = 0, riskReduced = 0;\nrecs.forEach(r => {\n  byTier[r.overall_risk_tier] = (byTier[r.overall_risk_tier]||0)+1;\n  byClass[r.data_classification] = (byClass[r.data_classification]||0)+1;\n  if (r.approval_route !== 'AUTO_APPROVE') pending++;\n  totalHrs += r.est_monthly_time_saved_hrs || 0;\n  totalUsd += r.est_monthly_cost_saving_usd || 0;\n  if (r.risk_reduction_flag) riskReduced++;\n});\nconst rows = recs.slice().reverse().slice(0,15).map(r => `<tr><td>${r.submission_id}</td><td>${r.use_case_name}</td><td>${r.business_unit}</td><td><span class=c-${r.data_classification}>${r.data_classification}</span></td><td><span class=t-${r.overall_risk_tier}>${r.overall_risk_tier}</span></td><td>${r.approval_route}</td><td>${r.est_monthly_time_saved_hrs}h</td></tr>`).join('');\nconst html = `<!doctype html><html><head><meta charset=utf-8><title>AI Governance KRI Dashboard</title><style>\nbody{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b1220;color:#e6edf3;margin:0;padding:32px}\nh1{font-size:22px;margin:0 0 4px}.sub{color:#8b97a7;font-size:13px;margin-bottom:24px}\n.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:28px}\n.card{background:#121c2e;border:1px solid #1f2c44;border-radius:12px;padding:18px}\n.card .k{font-size:12px;color:#8b97a7;text-transform:uppercase;letter-spacing:.5px}\n.card .v{font-size:26px;font-weight:700;margin-top:8px}\n.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px}\n.panel{background:#121c2e;border:1px solid #1f2c44;border-radius:12px;padding:18px}\n.panel h3{margin:0 0 14px;font-size:14px;color:#cdd6e2}\n.bar{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:13px}\n.bar .lbl{width:110px;color:#8b97a7}.bar .track{flex:1;background:#0b1220;border-radius:6px;height:14px;overflow:hidden}\n.bar .fill{height:100%;border-radius:6px}\ntable{width:100%;border-collapse:collapse;font-size:12px}\nth,td{text-align:left;padding:9px 10px;border-bottom:1px solid #1f2c44}\nth{color:#8b97a7;text-transform:uppercase;font-size:11px;letter-spacing:.5px}\n.t-LOW{color:#3fb950}.t-MEDIUM{color:#d29922}.t-HIGH{color:#f85149}\n.c-PUBLIC{color:#3fb950}.c-INTERNAL{color:#58a6ff}.c-CONFIDENTIAL{color:#d29922}.c-RESTRICTED{color:#f85149}\n.foot{color:#5b6676;font-size:11px;margin-top:20px}\n</style></head><body>\n<h1>AI Governance KRI Dashboard</h1>\n<div class=sub>Live program metrics &middot; NIST AI RMF aligned &middot; ${new Date().toISOString().slice(0,16).replace('T',' ')} UTC</div>\n<div class=cards>\n<div class=card><div class=k>Use Cases Governed</div><div class=v>${total}</div></div>\n<div class=card><div class=k>Pending Approval</div><div class=v style=color:#d29922>${pending}</div></div>\n<div class=card><div class=k>High-Risk Tier</div><div class=v style=color:#f85149>${byTier.HIGH}</div></div>\n<div class=card><div class=k>Est. Hrs Saved / mo</div><div class=v style=color:#3fb950>${totalHrs}</div></div>\n<div class=card><div class=k>Est. $ Saved / mo</div><div class=v style=color:#3fb950>$${totalUsd.toLocaleString()}</div></div>\n</div>\n<div class=grid2>\n<div class=panel><h3>Risk Tier Distribution</h3>\n${['LOW','MEDIUM','HIGH'].map(t=>{const c=t==='LOW'?'#3fb950':t==='MEDIUM'?'#d29922':'#f85149';const p=total?Math.round(byTier[t]/total*100):0;return `<div class=bar><span class=lbl>${t}</span><span class=track><span class=fill style=\"width:${p}%;background:${c}\"></span></span><span>${byTier[t]}</span></div>`}).join('')}\n</div>\n<div class=panel><h3>Data Classification</h3>\n${['PUBLIC','INTERNAL','CONFIDENTIAL','RESTRICTED'].map(t=>{const c=t==='PUBLIC'?'#3fb950':t==='INTERNAL'?'#58a6ff':t==='CONFIDENTIAL'?'#d29922':'#f85149';const p=total?Math.round(byClass[t]/total*100):0;return `<div class=bar><span class=lbl>${t}</span><span class=track><span class=fill style=\"width:${p}%;background:${c}\"></span></span><span>${byClass[t]}</span></div>`}).join('')}\n</div>\n</div>\n<div class=panel><h3>Recent Governance Decisions</h3>\n<table><tr><th>ID</th><th>Use Case</th><th>Unit</th><th>Data Class</th><th>Risk</th><th>Routing</th><th>Saved</th></tr>${rows||'<tr><td colspan=7 style=color:#5b6676>No submissions yet - POST a use case to /webhook/ai-usecase-intake</td></tr>'}</table></div>\n<div class=foot>Risk-reduction-flagged use cases: ${riskReduced} &middot; Generated by AI Governance Pipeline (n8n) &middot; Illustrative KRI estimates</div>\n</body></html>`;\nreturn [{ json: { html } }];"
+      },
+      "id": "build-dashboard",
+      "name": "Build Dashboard HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 760]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "text/html; charset=utf-8" }
+            ]
+          }
+        }
+      },
+      "id": "respond-dashboard",
+      "name": "Serve Dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [680, 760]
+    }
+  ],
+  "connections": {
+    "Webhook - New AI Use Case": { "main": [[{ "node": "Validate & Normalize", "type": "main", "index": 0 }]] },
+    "Validate & Normalize": { "main": [[{ "node": "Valid Submission?", "type": "main", "index": 0 }]] },
+    "Valid Submission?": { "main": [[{ "node": "STAGE 1 - LLM Data Classification", "type": "main", "index": 0 }], [{ "node": "Reject - Bad Input", "type": "main", "index": 0 }]] },
+    "STAGE 1 - LLM Data Classification": { "main": [[{ "node": "Parse Classification", "type": "main", "index": 0 }]] },
+    "Parse Classification": { "main": [[{ "node": "STAGE 2 - LLM Risk Assessment", "type": "main", "index": 0 }]] },
+    "STAGE 2 - LLM Risk Assessment": { "main": [[{ "node": "Parse Risk Assessment", "type": "main", "index": 0 }]] },
+    "Parse Risk Assessment": { "main": [[{ "node": "STAGE 3 - LLM Guidance Generation", "type": "main", "index": 0 }]] },
+    "STAGE 3 - LLM Guidance Generation": { "main": [[{ "node": "Assemble Governance Record", "type": "main", "index": 0 }]] },
+    "Assemble Governance Record": { "main": [[{ "node": "Log to KRI Datastore", "type": "main", "index": 0 }]] },
+    "Log to KRI Datastore": { "main": [[{ "node": "Notify Approver (Slack)", "type": "main", "index": 0 }, { "node": "Respond - Decision", "type": "main", "index": 0 }]] },
+    "Webhook - Dashboard": { "main": [[{ "node": "Build Dashboard HTML", "type": "main", "index": 0 }]] },
+    "Build Dashboard HTML": { "main": [[{ "node": "Serve Dashboard", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

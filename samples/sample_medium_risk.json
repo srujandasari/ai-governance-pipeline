@@ -1,0 +1,9 @@
+{
+  "use_case_name": "Vendor Security Questionnaire Triage",
+  "business_unit": "Third-Party Risk",
+  "description": "An n8n workflow that uses an LLM to read incoming vendor security questionnaire responses, flag incomplete or weak answers, and route them to an analyst for review before vendor onboarding.",
+  "data_description": "Vendor company security control responses, SOC 2 summaries, internal risk ratings. Confidential business data, no customer PII.",
+  "proposed_tool": "n8n with OpenAI node",
+  "third_parties": "OpenAI API for text analysis",
+  "expected_volume": "40 questionnaires per month"
+}

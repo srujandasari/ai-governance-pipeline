@@ -1,0 +1,9 @@
+{
+  "use_case_name": "Internal Meeting Notes Summarizer",
+  "business_unit": "IT Operations",
+  "description": "Use an internal Copilot assistant to summarize recorded internal team stand-up meetings into action items shared on the team SharePoint. No customer involvement.",
+  "data_description": "Internal meeting transcripts about project status and task assignments. No customer data, no PII.",
+  "proposed_tool": "Microsoft Copilot for M365",
+  "third_parties": "None - stays within Microsoft tenant",
+  "expected_volume": "20 meetings per week"
+}
